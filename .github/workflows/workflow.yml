@@ -1,0 +1,138 @@
+name: dotnet package
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: windows-latest
+    #strategy:
+    #  matrix:
+    #    dotnet-version: ['3.0', '3.1.x', '5.0.x' ]
+    steps:
+      - name: Set up JDK 11
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.11
+      - uses: actions/checkout@v3
+      #- name: Setup .NET Core SDK ${{ matrix.dotnet-version }}
+      #  uses: actions/setup-dotnet@v3
+      #  with:
+      #    dotnet-version: ${{ matrix.dotnet-version }}
+      # - name: Install dependencies
+      #   run: dotnet restore
+      # - name: Build
+      #   run: dotnet build --configuration Release --no-restore
+      # - name: Test
+      #   run: dotnet test --no-restore --verbosity normal
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v1
+        with:
+          path: ~\sonar\cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+      - name: Cache SonarCloud scanner
+        id: cache-sonar-scanner
+        uses: actions/cache@v1
+        with:
+          path: .\.sonar\scanner
+          key: ${{ runner.os }}-sonar-scanner
+          restore-keys: ${{ runner.os }}-sonar-scanner
+      - name: Install SonarCloud scanner
+        if: steps.cache-sonar-scanner.outputs.cache-hit != 'true'
+        run: |
+          dotnet tool install dotnet-sonarscanner --tool-path .\.sonar\scanner
+      - name: Install OpenCover
+        run: nuget install OpenCover -OutputDirectory ".\.dotcover"
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1 
+      - name: Restore NuGet
+        run: nuget restore
+      - name: Build
+        run: msbuild.exe AutomationScript.sln /clp:ErrorsOnly /fileLogger /flp:errorsonly /nologo /t:Clean,Restore,Build /p:Configuration=Release /p:ReferencePath="${{ github.workspace }}\Dlls" # /verbosity:minimal
+      # dotnet tool install --global dotnet-sonarscanner
+      #- name: Install Dotnet coverage
+      #  run: dotnet tool install --global dotnet-coverage
+      #- name: Install Dotnet coverage
+      #  run: dotnet tool install --global JetBrains.dotCover.GlobalTool
+      
+        #  .\.sonar\scanner\dotnet-sonarscanner begin /k:"mmlbpdb_test2" /o:"testorg561" /d:sonar.login="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.vscoveragexml.reportsPaths=coverage.xml
+        #  msbuild.exe AutomationScript.sln /clp:ErrorsOnly /fileLogger /flp:errorsonly /nologo /t:Clean,Restore,Build /p:Configuration=Release /p:ReferencePath="${{ github.workspace }}\Dlls"
+        #  dotnet-coverage collect 'dotnet test' -f xml  -o 'coverage.xml'
+        #  .\.sonar\scanner\dotnet-sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
+        # Windows .NET 
+        # dotnet sonarscanner begin /k:"mmlbpdb_testing" /o:"testorg561" /d:sonar.login="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.vscoveragexml.reportsPaths=coverage.xml /d:sonar.log.level=Debug
+        # dotnet build --configuration Release
+        # dotnet-coverage collect 'dotnet test' -f xml  -o 'coverage.xml'
+        # dotnet sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
+        # Ubuntu
+        # dotnet sonarscanner begin /k:"mmlbpdb_testing" /o:"testorg561" /d:sonar.login="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.dotcover.reportsPaths=dotCover.Output.html /d:sonar.log.level=Debug
+        # dotnet build --configuration Release
+        # dotnet dotcover test --dcReportType=HTML
+        # dotnet sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
+      #- name: readDir2
+      #  run: ls -lR 
+      - name: Scan Test Projects
+        run: echo "todo"
+      - name: Prepare Unit Tests
+        uses: darenm/Setup-VSTest@v1
+      - name: Unit Tests
+        id: unit-tests
+        #run: vstest.console.exe **\bin\**\*.UnitTests.dll **\bin\**\*.Tests.dll **\bin\**\*Tests.dll /logger:trx # https://learn.microsoft.com/en-us/visualstudio/test/vstest-console-options?view=vs-2022
+        run: .\.dotcover\OpenCover.4.7.1221\tools\OpenCover.Console.exe -target:"vstest.console.exe" -targetargs:"**\bin\**\*Tests.dll" -returntargetcode -output:coverage.xml -register:Path32
+        continue-on-error: true
+      - name: list content
+        run: dir /s
+        shell: cmd
+      - name: Analyze
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+            .\.sonar\scanner\dotnet-sonarscanner begin /k:"MyFakeCompanyProtocols_AutomationScriptExample" /o:"myfakecompanyprotocols" /d:sonar.login="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.cs.opencover.reportsPaths=coverage.xml
+            msbuild.exe AutomationScript.sln /clp:ErrorsOnly /fileLogger /flp:errorsonly /nologo /t:Clean,Restore,Build /p:Configuration=Release /p:ReferencePath="${{ github.workspace }}\Dlls"
+            .\.sonar\scanner\dotnet-sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
+        continue-on-error: true
+      # & .\.dotcover\OpenCover.4.7.1221\tools\OpenCover.Console.exe -target:"vstest.console.exe" -targetargs:"**\bin\**\*Tests.dll" -returntargetcode -output:coverage.xml -register:user
+      - name: SonarQube Quality Gate check
+        id: sonarqube-quality-gate-check
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        with:
+          scanMetadataReportFile: .sonarqube/out/.sonar/report-task.txt
+        # Force to fail step after specific time.
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          #SONAR_HOST_URL: "https://sonarcloud.io" #OPTIONAL
+      - name: Example show SonarQube Quality Gate Status value
+        run: echo "The Quality Gate status is ${{ steps.sonarqube-quality-gate-check.outputs.quality-gate-status }}"
+      - name: Quality Gate
+        run: |
+          if "${{ steps.unit-tests.outcome }}" == "failure" or "${{ steps.sonarqube-quality-gate-check.outputs.quality-gate-status }}" == "FAILED":
+            print("Quality gate failed due to:")
+          if "${{ steps.unit-tests.outcome }}" == "failure":
+            print("- Test failures")
+          if "${{ steps.sonarqube-quality-gate-check.outputs.quality-gate-status }}" == "FAILED":
+            print("- Code analysis quality gate failed")
+          if "${{ steps.unit-tests.outcome }}" == "failure" or "${{ steps.sonarqube-quality-gate-check.outputs.quality-gate-status }}" == "FAILED":
+            exit(1)
+        shell: python
+        # run: |
+        #   SET Result=0
+        #   IF "${{ steps.unit-tests.outcome }}" == "failure" SET Result=1
+        #   IF "${{ steps.sonarqube-quality-gate-check.outputs.quality-gate-status }}" ==  "FAILED" SET Result=1
+        #   IF %Result% EQU 1 (
+        #   ECHO "Quality gate failed"
+        #   EXIT 1
+        #   ) ELSE (
+        #   ECHO "Quality gate passed"
+        #   )
+        # shell: cmd
+      #- name: Upload a Build Artifact
+      #  uses: actions/upload-artifact@v2.2.2
+      #  with:
+      #    # Artifact name
+      #    name: buildresult #.zip will be added automatically 
+      #    path: coverage.xml
+      #    #path: /home/runner/work/testing/testing/ClassLibrary/bin/Release/net462/*.*
+      
